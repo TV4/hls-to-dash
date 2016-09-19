@@ -19,7 +19,10 @@ class Base:
         self.streams = []
     def parsedata(self, probedata):
         if len(probedata.streams) > 0:
-            self.startTime = float(probedata.streams[0].start_time)
+            if not probedata.streams[0].start_time == 'N/A':
+                self.startTime = float(probedata.streams[0].start_time)
+            else:
+                raise Exception("No timestamp in segment", probedata.streams[0].start_time)
     def getStartTime(self):
         return self.startTime
     def cleanup(self):
