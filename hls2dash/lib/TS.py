@@ -68,7 +68,10 @@ class Remote(Base):
         self.parsedata(FFProbe(self.downloadedFile.name))
     def remuxMP4(self, outdir, filename):
         self.download()
-        self.probe()
+        try:
+            self.probe()
+        except:
+            debug.log("No start time available")
         tsremux(self.downloadedFile.name, outdir, filename, self.getStartTime())
         self.cleanup()
     def getFilename(self):
@@ -85,7 +88,10 @@ class Local(Base):
             raise Exception("Failed to probe file %s" % self.path)
         self.parsedata(FFProbe(self.path))
     def remuxMP4(self, outdir, filename):
-        self.probe()
+        try:
+            self.probe()
+        except:
+            debug.log("No start time available")
         tsremux(self.path, outdir, filename, self.getStartTime())
     def getFilename(self):
         return self.path
