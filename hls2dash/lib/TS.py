@@ -82,7 +82,7 @@ class Local(Base):
         self.path = path
     def probe(self):
         if not os.path.exists(self.path):
-            raise Exception("Failed to probe file", self.path)
+            raise Exception("Failed to probe file %s" % self.path)
         self.parsedata(FFProbe(self.path))
     def remuxMP4(self, outdir, filename):
         self.probe()
