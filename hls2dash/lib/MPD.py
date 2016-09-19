@@ -433,7 +433,7 @@ class HLS(Base):
         lastperiod = allperiods[len(allperiods)-1]
         lastperiod.setAsLastPeriod()
         if lastSeg:
-            start, duration = self._getStartAndDurationFromFile(lastSeg.uri)
+            start, duration = self._getStartAndDurationFromFile(self.baseurl + lastSeg.uri)
             self.context.setLastMediaSeq(playlist.media_sequence, start, duration)
     
     def _getStartAndDurationFromFile(self, uri):
