@@ -102,6 +102,9 @@ class Context:
         self.timebase = 90000.0
         self.prevSplitTS = None
         self.nextSplitTS = None
+        self.mediaSeqNo = None
+        self.mediaSeqStart = None
+        self.mediaSeqDuration = None
     def getPrevSplit(self):
         if self.prevSplitTS == None:
             return 0
@@ -118,6 +121,12 @@ class Context:
         return float(self.timebase)
     def resetNextSplit(self):
         self.nextSplitTS = None
+    def setLastMediaSeq(self, seqno, start, duration):
+        self.mediaSeqNo = seqno
+        self.mediaSeqStart = start
+        self.mediaSeqDuration = duration
+    def getLastMediaSeq(self):
+        return (self.mediaSeqNo, self.mediaSeqStart, self.mediaSeqDuration) 
     def restore(self):
         debug.log('Restoring context from %s' % self.filename)
         if os.path.isfile(self.filename):
@@ -129,6 +138,12 @@ class Context:
                     self.prevSplitTS = obj['prevsplit']
                 if 'nextsplit' in obj:
                     self.nextSplitTS = obj['nextsplit']
+                if 'mediaseqno' in obj:
+                    self.mediaSeqNo = obj['mediaseqno']
+                if 'mediaseqstart' in obj:
+                    self.mediaSeqStart = obj['mediaseqstart']
+                if 'mediaseqduration' in obj:
+                    self.mediaSeqDuration = obj['mediaseqduration']
         debug.log('Context: %s' % self)
     def save(self):
         obj = {}
@@ -137,6 +152,12 @@ class Context:
             obj['prevsplit'] = self.prevSplitTS
         if self.nextSplitTS != None:
             obj['nextsplit'] = self.nextSplitTS
+        if self.mediaSeqNo != None:
+            obj['mediaseqno'] = self.mediaSeqNo
+        if self.mediaSeqStart != None:
+            obj['mediaseqstart'] = self.mediaSeqStart
+        if self.mediaSeqDuration != None:
+            obj['mediaseqduration'] = self.mediaSeqDuration
         with open(self.filename, 'w+') as f:
             f.seek(0)
             f.write(json.dumps(obj, indent=4))
@@ -148,6 +169,12 @@ class Context:
             s += ',prevsplit=%d' % self.prevSplitTS
         if self.nextSplitTS != None:
             s += ',nextsplit=%d' % self.nextSplitTS
+        if self.mediaSeqNo != None:
+            s += ',mediaseqno=%d' % self.mediaSeqNo
+        if self.mediaSeqStart != None:
+            s += ',mediaseqstart=%f' % self.mediaSeqStart
+        if self.mediaSeqDuration != None:
+            s += ',mediaseqduration=%d' % self.mediaSeqDuration
         return s
 
 # MPEG DASH manifest (base class)
@@ -193,7 +220,7 @@ class HLS(Base):
         Base.__init__(self)
         self.playlistlocator = playlistlocator
         self.profilepattern = 'master(\d+).m3u8'
-        self.numberpattern = 'master\d+_(\d+).ts'
+        self.numberpattern = 'master(\d+)_(\d+).ts'
         self.isRemote = False
         self.baseurl = ''
         res = re.match('^(.*)/.*.m3u8$', playlistlocator)
@@ -251,7 +278,7 @@ class HLS(Base):
     def _getStartNumberFromFilename(self, filename):
         result = re.match(self.numberpattern, filename)
         if result:
-            return result.group(1)
+            return result.group(2)
         return 0
 
     def _parsePlaylist(self, playlist):
@@ -266,6 +293,8 @@ class HLS(Base):
         isFirstSplit = True
         lastnumber = None
         periodid = 'UNDEF'
+        lastSeg = None
+        debug.log("Current mediaseq:", playlist.media_sequence)
         for seg in playlist.segments:
             if state == 'initial':
                 if seg.cue_out == True:
@@ -307,8 +336,28 @@ class HLS(Base):
                     period.addSCTE35Splice(eventid, seg.scte35_duration, seg.scte35)
                     eventid = eventid + 1
                 # Obtain the start time for the first segment in this period
-                firstStartTimeInPeriod = self._getStartTimeFromFile(self.baseurl + seg.uri)
-                firstStartTimeInPeriodTicks = int(float(firstStartTimeInPeriod) * self.context.getTimeBase())
+                try:
+                    firstStartTimeInPeriod = self._getStartTimeFromFile(self.baseurl + seg.uri)
+                    firstStartTimeInPeriodTicks = int(float(firstStartTimeInPeriod) * self.context.getTimeBase())
+                except:
+                    # Not able to obtain start timestamp for the first segment in period
+                    if lastSeg:
+                        # Unless this is the very first segment in the HLS manifest we can
+                        # use the previous segment
+                        lastSegStartTime = self._getStartTimeFromFile(self.baseurl + lastSeg.uri)
+                        firstStartTimeInPeriod = lastSegStartTime + lastSeg.duration
+                        firstStartTimeInPeriodTicks = int(float(firstStartTimeInPeriod) * self.context.getTimeBase())
+                    else:
+                        # This is the first segment in the HLS manifest. We need to get the segment
+                        # from previous HLS manifest
+                        lastMediaSeqNo, lastMediaSeqStart, lastMediaSeqDuration = self.context.getLastMediaSeq()
+                        # We should only be here if current media sequence is different from last stored
+                        # in context
+                        assert(lastMediaSeqNo != playlist.media_sequence)
+                        debug.log("Have to read segment info from last media sequence stored in context:", lastMediaSeqStart, lastMediaSeqDuration)
+                        firstStartTimeInPeriod = lastMediaSeqStart + lastMediaSeqDuration
+                        firstStartTimeInPeriodTicks = int(float(firstStartTimeInPeriod) * self.context.getTimeBase())
+
                 # Determine the period ID
                 if isFirst == True:
                     debug.log('firstStartTimeInPeriod=%d, prevsplit=%d' % (firstStartTimeInPeriodTicks, self.context.getPrevSplit()))
@@ -376,13 +425,28 @@ class HLS(Base):
                 as_audio.setStartTime(periodstartsec)
             isFirstInPeriod = False
             isFirst = False
+            lastSeg = seg
         if self.context.getNextSplit() < self.context.getPrevSplit():
             # No new split in this manifest, last split is the current one
             self.context.resetNextSplit()
         allperiods = self.getAllPeriods()
         lastperiod = allperiods[len(allperiods)-1]
         lastperiod.setAsLastPeriod()
+        if lastSeg:
+            start, duration = self._getStartAndDurationFromFile(lastSeg.uri)
+            self.context.setLastMediaSeq(playlist.media_sequence, start, duration)
     
+    def _getStartAndDurationFromFile(self, uri):
+        if self.isRemote:
+            if not re.match('^http', uri):
+                uri = self.baseurl + uri
+            ts = TS.Remote(uri)
+        else:
+            ts = TS.Local(uri)
+        ts.probe()
+        ts.cleanup()
+        return (ts.getStartTime(), ts.getDuration())
+
     def _getStartTimeFromFile(self, uri):
         if self.isRemote:
             if not re.match('^http', uri):
@@ -393,6 +457,17 @@ class HLS(Base):
         ts.probe()
         ts.cleanup()
         return ts.getStartTime()
+
+    def _getDurationFromFile(self, uri):
+        if self.isRemote:
+            if not re.match('^http', uri):
+                uri = self.baseurl + uri
+            ts = TS.Remote(uri)
+        else:
+            ts = TS.Local(uri)
+        ts.probe()
+        ts.cleanup()
+        return ts.getDuration()
 
     def _initiatePeriod(self, period, profiles):
         for p in profiles:

@@ -18,13 +18,18 @@ class Base:
         self.duration = 0
         self.streams = []
     def parsedata(self, probedata):
+        debug.log("probing...")
         if len(probedata.streams) > 0:
             if not probedata.streams[0].start_time == 'N/A':
                 self.startTime = float(probedata.streams[0].start_time)
+                self.duration = float(probedata.streams[0].duration)
+                debug.log("probed: ", self.startTime, self.duration)
             else:
                 raise Exception("No timestamp in segment", probedata.streams[0].start_time)
     def getStartTime(self):
         return self.startTime
+    def getDuration(self):
+        return self.duration
     def cleanup(self):
         return
 
@@ -53,6 +58,9 @@ class Remote(Base):
             c.setopt(c.URL, self.uri)
             c.setopt(c.WRITEDATA, self.downloadedFile)
             c.perform()
+            debug.log("status code: %s" % c.getinfo(c.HTTP_CODE))
+            if not c.getinfo(c.HTTP_CODE) == 200:
+                raise Exception("Failed to download file", self.uri)
             c.close
             self.downloadedFile.close()
     def probe(self):
@@ -73,6 +81,8 @@ class Local(Base):
         Base.__init__(self)
         self.path = path
     def probe(self):
+        if not os.path.exists(self.path):
+            raise Exception("Failed to probe file", self.path)
         self.parsedata(FFProbe(self.path))
     def remuxMP4(self, outdir, filename):
         self.probe()
