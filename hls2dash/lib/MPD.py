@@ -351,9 +351,6 @@ class HLS(Base):
                         # This is the first segment in the HLS manifest. We need to get the segment
                         # from previous HLS manifest
                         lastMediaSeqNo, lastMediaSeqStart, lastMediaSeqDuration = self.context.getLastMediaSeq()
-                        # We should only be here if current media sequence is different from last stored
-                        # in context
-                        assert(lastMediaSeqNo != playlist.media_sequence)
                         debug.log("Have to read segment info from last media sequence stored in context:", lastMediaSeqStart, lastMediaSeqDuration)
                         firstStartTimeInPeriod = lastMediaSeqStart + lastMediaSeqDuration
                         firstStartTimeInPeriodTicks = int(float(firstStartTimeInPeriod) * self.context.getTimeBase())
